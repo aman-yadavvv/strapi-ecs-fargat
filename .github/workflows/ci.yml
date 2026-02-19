@@ -10,7 +10,7 @@ on:
     branches: [main]
 
 env:
-  AWS_REGION: us-east-1
+  AWS_REGION: ap-south-1
   ECR_REPO: strapi-app
 
 jobs:
@@ -55,7 +55,7 @@ jobs:
         id: build
         uses: docker/build-push-action@v5
         with:
-          context: ./strapi
+          context: ./my-strapi
           push: ${{ github.event_name == 'push' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
