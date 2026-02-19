@@ -4,12 +4,12 @@ on:
   workflow_dispatch:
     inputs:
       image_tag:
-        description: 'Image tag to deploy (default: latest)'
+        description: 'Image tag to deploy'
         required: false
         default: 'latest'
 
 env:
-  AWS_REGION: us-east-1
+  AWS_REGION: ap-south-1  # Change this if your resources are elsewhere
   ECR_REPO: strapi-app
   ECS_CLUSTER: strapi-cluster
   ECS_SERVICE: strapi-service
@@ -29,6 +29,17 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Debug AWS Resources
+        run: |
+          echo "=== Available Clusters ==="
+          aws ecs list-clusters
+          
+          echo "=== Checking specific cluster ==="
+          aws ecs describe-clusters --clusters ${{ env.ECS_CLUSTER }} || echo "CLUSTER NOT FOUND"
+          
+          echo "=== All Services ==="
+          aws ecs list-services --cluster ${{ env.ECS_CLUSTER }} || echo "CANNOT LIST SERVICES"
+
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
@@ -37,44 +48,25 @@ jobs:
         run: |
           IMAGE_TAG="${{ github.event.inputs.image_tag }}"
           NEW_IMAGE="${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPO }}:$IMAGE_TAG"
-          echo "Deploying image: $NEW_IMAGE"
+          echo "Deploying: $NEW_IMAGE"
           
-          # Get current task definition ARN from service
+          # Get task definition
           TASK_DEF_ARN=$(aws ecs describe-services \
             --cluster ${{ env.ECS_CLUSTER }} \
             --services ${{ env.ECS_SERVICE }} \
             --query 'services[0].taskDefinition' \
             --output text)
           
-          echo "Current task definition ARN: $TASK_DEF_ARN"
-          
-          # Extract family name
           FAMILY=$(echo $TASK_DEF_ARN | cut -d'/' -f2 | cut -d':' -f1)
-          echo "Task family: $FAMILY"
+          echo "Family: $FAMILY"
           
-          # Get current task definition
-          aws ecs describe-task-definition \
-            --task-definition $FAMILY \
-            --query taskDefinition > task-def.json
+          # Download, update, register, deploy
+          aws ecs describe-task-definition --task-definition $FAMILY --query taskDefinition > task-def.json
           
-          # Update image
-          cat task-def.json | jq --arg IMG "$NEW_IMAGE" \
-            'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy) | .containerDefinitions[0].image = $IMG' \
-            > new-task-def.json
+          cat task-def.json | jq --arg IMG "$NEW_IMAGE" 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy) | .containerDefinitions[0].image = $IMG' > new-task-def.json
           
-          # Register new task definition
-          NEW_TASK_DEF_ARN=$(aws ecs register-task-definition \
-            --cli-input-json file://new-task-def.json \
-            --query 'taskDefinition.taskDefinitionArn' \
-            --output text)
+          NEW_ARN=$(aws ecs register-task-definition --cli-input-json file://new-task-def.json --query 'taskDefinition.taskDefinitionArn' --output text)
           
-          echo "Registered new task definition: $NEW_TASK_DEF_ARN"
+          aws ecs update-service --cluster ${{ env.ECS_CLUSTER }} --service ${{ env.ECS_SERVICE }} --task-definition $NEW_ARN --force-new-deployment
           
-          # Update service with new task definition
-          aws ecs update-service \
-            --cluster ${{ env.ECS_CLUSTER }} \
-            --service ${{ env.ECS_SERVICE }} \
-            --task-definition $NEW_TASK_DEF_ARN \
-            --force-new-deployment
-          
-          echo "Deployment triggered successfully!"
+          echo "Done!"
