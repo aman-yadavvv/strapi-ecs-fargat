@@ -33,29 +33,28 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Get task definition family from service
-        id: get-family
-        run: |
-          TASK_DEF_ARN=$(aws ecs describe-services \
-            --cluster ${{ env.ECS_CLUSTER }} \
-            --services ${{ env.ECS_SERVICE }} \
-            --query 'services[0].taskDefinition' \
-            --output text)
-          
-          FAMILY=$(echo $TASK_DEF_ARN | cut -d'/' -f2 | cut -d':' -f1)
-          
-          echo "TASK_FAMILY=$FAMILY" >> $GITHUB_ENV
-          echo "Current task family: $FAMILY"
-
       - name: Deploy to ECS
         run: |
           IMAGE_TAG="${{ github.event.inputs.image_tag }}"
           NEW_IMAGE="${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPO }}:$IMAGE_TAG"
           echo "Deploying image: $NEW_IMAGE"
           
+          # Get current task definition ARN from service
+          TASK_DEF_ARN=$(aws ecs describe-services \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --services ${{ env.ECS_SERVICE }} \
+            --query 'services[0].taskDefinition' \
+            --output text)
+          
+          echo "Current task definition ARN: $TASK_DEF_ARN"
+          
+          # Extract family name
+          FAMILY=$(echo $TASK_DEF_ARN | cut -d'/' -f2 | cut -d':' -f1)
+          echo "Task family: $FAMILY"
+          
           # Get current task definition
           aws ecs describe-task-definition \
-            --task-definition ${{ env.TASK_FAMILY }} \
+            --task-definition $FAMILY \
             --query taskDefinition > task-def.json
           
           # Update image
